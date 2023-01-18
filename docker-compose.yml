@@ -1,0 +1,103 @@
+version: "3.9"
+services:
+
+  ### Prefect Database
+  database:
+    image: postgres:15.1-alpine
+    restart: always
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_DB=orion
+    expose:
+      - 5432
+    volumes: 
+      - db:/var/lib/postgresql/data
+    profiles: ["orion"]
+  
+  ### MinIO for flow storage
+  minio:
+    image: minio/minio:latest
+    entrypoint: ["minio", "server", "--address", "0.0.0.0:9000", "--console-address", "0.0.0.0:9001", "/data"]
+    volumes:
+      - "minio:/data"
+    ports:
+      - 9000:9000
+      - 9001:9001
+    profiles: ["minio"]
+
+  ### Prefect Orion API
+  orion:
+    image: prefect:latest
+    restart: always
+    volumes:
+      - prefect:/root/.prefect
+      - "/etc/timezone:/etc/timezone:ro"
+      - "/etc/localtime:/etc/localtime:ro"
+    entrypoint: ["prefect", "orion", "start"]
+    environment:
+      # If you want Orion to access Orion from anywhere other than the Docker host machine, you will need to change
+      # PREFECT_API_URL to match the hostname/IP used to load the Orion UI in your web browser.
+      - PREFECT_API_URL=http://192.168.9.104:4200/api
+      - PREFECT_ORION_API_HOST=0.0.0.0
+      - PREFECT_ORION_DATABASE_CONNECTION_URL=postgresql+asyncpg://postgres:postgres@database:5432/orion
+    ports:
+      - 4200:4200
+    depends_on:
+      - database
+    profiles: ["orion"]
+
+  ## Prefect Agent
+  agent:
+    image: prefect:latest
+    working_dir: "/root/a22dabnvcsdl-dataflowcommon"
+    restart: always
+    # entrypoint: ["prefect", "agent", "start", "--work-queue", "demo"]
+    command:
+      - /bin/bash
+      - -c
+      - |
+        pip install -r requirements.txt
+        prefect agent start --work-queue demo
+    volumes:
+      - "./a22dabnvcsdl-dataflowcommon:/root/a22dabnvcsdl-dataflowcommon"
+    environment:
+      - PREFECT_API_URL=http://orion:4200/api
+#       Use PREFECT_API_KEY if connecting the agent to Prefect Cloud
+#     - PREFECT_API_KEY=YOUR_API_KEY
+      - PYTHONPATH=/root/a22dabnvcsdl-dataflowcommon/src
+      - META_DIR_BLOCK_NAME=meta-dir
+      - META_FILENAME_BLOCK_NAME=meta-filename
+      - DATA_STORE_DIR_BLOCK_NAME=data-store-dir
+      - PREFIX_LAKE_DIR=/moha/raw_zone/dwh
+      - NAMENODE_FILESYSTEM_URL=hadoop-namenode:9000
+      - PREFIX_LOAD_FACT_PROC=upsert_
+    profiles: ["agent"]
+
+  ### Prefect CLI
+  cli:
+    image: prefect:latest
+    entrypoint: ["bash"]
+    working_dir: "/root/a22dabnvcsdl-dataflowcommon"
+    volumes:
+      - "./a22dabnvcsdl-dataflowcommon:/root/a22dabnvcsdl-dataflowcommon"
+    environment:
+      - PREFECT_API_URL=http://orion:4200/api
+#       Use PREFECT_API_KEY to use the CLI to interact with Prefect Cloud
+#     - PREFECT_API_KEY=YOUR_API_KEY
+      - PYTHONPATH=/root/a22dabnvcsdl-dataflowcommon/src
+      - META_DIR_BLOCK_NAME=meta-dir
+      - META_FILENAME_BLOCK_NAME=meta-filename
+      - DATA_STORE_DIR_BLOCK_NAME=data-store-dir
+      - PREFIX_LAKE_DIR=/moha/raw_zone/dwh
+      - NAMENODE_FILESYSTEM_URL=hadoop-namenode:9000
+      - PREFIX_LOAD_FACT_PROC=upsert_
+    profiles: ["cli"]
+      
+volumes:
+  prefect:
+  db:
+  minio:
+networks:
+  default:
+    name: prefect-network
